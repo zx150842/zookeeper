@@ -300,7 +300,8 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements
         LOG.info("CommitProcessor exited loop!");
     }
 
-    private void waitForEmptyPool() throws InterruptedException {
+    private void
+    waitForEmptyPool() throws InterruptedException {
         synchronized(emptyPoolSync) {
             while ((!stopped) && isProcessingRequest()) {
                 emptyPoolSync.wait();

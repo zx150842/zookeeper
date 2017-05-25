@@ -341,7 +341,8 @@ public class Leader {
      * Similar to INFORM, only for a reconfig operation.
      */
     final static int INFORMANDACTIVATE = 19;
-    
+
+    // 还没有获得足够ack的提案（处于两阶段的第一阶段）
     final ConcurrentMap<Long, Proposal> outstandingProposals = new ConcurrentHashMap<Long, Proposal>();
 
     private final ConcurrentLinkedQueue<Proposal> toBeApplied = new ConcurrentLinkedQueue<Proposal>();
@@ -361,11 +362,13 @@ public class Leader {
             try {
                 while (!stop) {
                     try{
+                        // 来自其他follow的连接
                         Socket s = ss.accept();
                         // start with the initLimit, once the ack is processed
                         // in LearnerHandler switch to the syncLimit
                         s.setSoTimeout(self.tickTime * self.initLimit);
                         s.setTcpNoDelay(nodelay);
+                        // 每个连接都对应一个LearnerHandler，最终会启动LearnerHandler
                         LearnerHandler fh = new LearnerHandler(s, Leader.this);
                         fh.start();
                     } catch (SocketException e) {
@@ -722,6 +725,7 @@ public class Leader {
        // pending all wait for a quorum of old and new config, so it's not possible to get enough acks
        // for an operation without getting enough acks for preceding ops. But in the future if multiple
        // concurrent reconfigs are allowed, this can happen.
+        // 如果当前提案之前还有没有提交的提案，则当前提案不能提交（这个保证了提案提交的顺序与提案提出的顺序相同）
        if (outstandingProposals.containsKey(zxid - 1)) return false;
        
        // in order to be committed, a proposal must be accepted by a quorum.
@@ -740,7 +744,8 @@ public class Leader {
         }     
         
         outstandingProposals.remove(zxid);
-        
+
+        // 将提交的提案传给调用链的下一个处理器处理
         if (p.request != null) {
              toBeApplied.add(p);
         }
@@ -772,10 +777,14 @@ public class Leader {
             informAndActivate(p, designatedLeader);
             //turnOffFollowers();
         } else {
+            // 将提案被提交的消息发送给所有的仲裁者
             commit(zxid);
+            // 将详细的提案信息发送给所有的监听者
             inform(p);
         }
+        // commitProcessor 提交提案
         zk.commitProcessor.commit(p.request);
+        // 如果当前提案需要同步，则强制调用sendSync方法
         if(pendingSyncs.containsKey(zxid)){
             for(LearnerSyncRequest r: pendingSyncs.remove(zxid)) {
                 sendSync(r);
@@ -815,7 +824,6 @@ public class Leader {
             return;
         }
             
-            
         if (outstandingProposals.size() == 0) {
             if (LOG.isDebugEnabled()) {
                 LOG.debug("outstanding is 0");
@@ -836,7 +844,7 @@ public class Leader {
                     Long.toHexString(zxid), followerAddr);
             return;
         }
-        
+        // 提案的ack+1
         p.addAck(sid);        
         /*if (LOG.isDebugEnabled()) {
             LOG.debug("Count for zxid: 0x{} is {}",

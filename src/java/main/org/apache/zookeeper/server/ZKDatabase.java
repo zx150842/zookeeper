@@ -62,6 +62,9 @@ import org.slf4j.LoggerFactory;
  * server states that includes the sessions, datatree and the
  * committed logs. It is booted up  after reading the logs
  * and snapshots from the disk.
+ *
+ * zookeeper内存数据库，用来保存session信息，znode节点树，和提交日志。
+ * 在启动时，会将从磁盘上的日志和快照恢复
  */
 public class ZKDatabase {
 

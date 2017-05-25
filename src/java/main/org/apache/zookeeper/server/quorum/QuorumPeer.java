@@ -78,6 +78,11 @@ import org.slf4j.LoggerFactory;
  * This class will setup a datagram socket that will always respond with its
  * view of the current leader. The response will take the form of:
  *
+ * 这个类用来管理仲裁协议。每个server可能处于以下三种状态的一种：
+ * 1. leader选举。每个server都会投票选举出一个leader（在第一轮投票时每个server都会投自己）
+ * 2. follower。server会和leader同步数据，并将所有的事务请求转发给leader
+ * 3. leader。server将会处理请求并将结果广播给follow，当过半的follow都将请求结果写入日志后，
+ *    请求执行成功
  * <pre>
  * int xid;
  *
@@ -768,7 +773,9 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         if (!getView().containsKey(myid)) {
             throw new RuntimeException("My id " + myid + " not in the peer list");
          }
+         // 从事务日志目录dataLogDir和数据快照目录dataDir恢复出DataTree数据
         loadDataBase();
+        // 开启对客户端的连接端口
         startServerCnxnFactory();
         try {
             adminServer.start();
@@ -776,7 +783,10 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             LOG.warn("Problem starting AdminServer", e);
             System.out.println(e);
         }
+        // 创建选举算法
         startLeaderElection();
+        // 启动QuorumPeer线程，在线程中进行服务器状态检查
+        // 当前有四种状态LOOKING，FOLLOWING，LEADING，OBSERVING
         super.start();
     }
 

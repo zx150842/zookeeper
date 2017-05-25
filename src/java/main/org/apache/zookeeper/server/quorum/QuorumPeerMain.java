@@ -60,6 +60,7 @@ import org.apache.zookeeper.server.quorum.QuorumPeerConfig.ConfigException;
  * In addition to the config file. There is a file in the data directory called
  * "myid" that contains the server id as an ASCII decimal value.
  *
+ * zookeeper启动类
  */
 public class QuorumPeerMain {
     private static final Logger LOG = LoggerFactory.getLogger(QuorumPeerMain.class);
@@ -111,6 +112,7 @@ public class QuorumPeerMain {
         }
 
         // Start and schedule the the purge task
+        // 启动定时清除镜像任务，默认设置保留3份
         DatadirCleanupManager purgeMgr = new DatadirCleanupManager(config
                 .getDataDir(), config.getDataLogDir(), config
                 .getSnapRetainCount(), config.getPurgeInterval());
@@ -137,6 +139,7 @@ public class QuorumPeerMain {
 
       LOG.info("Starting quorum peer");
       try {
+          // 用来接收来自客户端的请求
           ServerCnxnFactory cnxnFactory = null;
           ServerCnxnFactory secureCnxnFactory = null;
 
