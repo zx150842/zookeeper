@@ -349,6 +349,7 @@ public class Leader {
 
     private final Proposal newLeaderProposal = new Proposal();
 
+    // 用来处理leaner（follower或observer）的连接
     class LearnerCnxAcceptor extends ZooKeeperCriticalThread {
         private volatile boolean stop = false;
 
@@ -873,7 +874,7 @@ public class Leader {
     }
     
     static class ToBeAppliedRequestProcessor implements RequestProcessor {
-        private final RequestProcessor next;
+        private final RequestProcessor next; // FinalRequestProcessor
 
         private final Leader leader;
 
@@ -911,6 +912,7 @@ public class Leader {
             // requests, for which we will have a hdr. We can't simply use
             // request.zxid here because that is set on read requests to equal
             // the zxid of the last write op.
+            // 只有写操作的request会有hdr，而toBeApplied只处理写操作
             if (request.getHdr() != null) {
                 long zxid = request.getHdr().getZxid();
                 Iterator<Proposal> iter = leader.toBeApplied.iterator();

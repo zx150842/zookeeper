@@ -28,6 +28,8 @@ import org.slf4j.LoggerFactory;
 /**
  * This RequestProcessor simply forwards requests to an AckRequestProcessor and
  * SyncRequestProcessor.
+ *
+ * ProposaslRequestProcessor只是将消息传递给AckRequestProcessor和SyncRequestProcessor
  */
 public class ProposalRequestProcessor implements RequestProcessor {
     private static final Logger LOG =
@@ -35,7 +37,7 @@ public class ProposalRequestProcessor implements RequestProcessor {
 
     LeaderZooKeeperServer zks;
 
-    RequestProcessor nextProcessor;
+    RequestProcessor nextProcessor; // CommitProcessor
 
     SyncRequestProcessor syncProcessor;
 
@@ -71,14 +73,17 @@ public class ProposalRequestProcessor implements RequestProcessor {
         if (request instanceof LearnerSyncRequest){
             zks.getLeader().processSync((LearnerSyncRequest)request);
         } else {
+            // 发送到CommitRequestProcessor队列
             nextProcessor.processRequest(request);
             if (request.getHdr() != null) {
                 // We need to sync and get consensus on any transactions
+                // 对于事务请求，这里需要在所有节点进行投票，并进行事务日志记录
                 try {
                     zks.getLeader().propose(request);
                 } catch (XidRolloverException e) {
                     throw new RequestProcessorException(e.getMessage(), e);
                 }
+                // 将写请求写日志
                 syncProcessor.processRequest(request);
             }
         }

@@ -28,6 +28,8 @@ import org.apache.zookeeper.server.RequestProcessor;
 /**
  * This is a very simple RequestProcessor that simply forwards a request from a
  * previous stage to the leader as an ACK.
+ *
+ * 这个处理器只有leader节点存在，如果leader日志写成功，这个处理器会向leader节点（自身节点）发出ack确认
  */
 class AckRequestProcessor implements RequestProcessor {
     private static final Logger LOG = LoggerFactory.getLogger(AckRequestProcessor.class);

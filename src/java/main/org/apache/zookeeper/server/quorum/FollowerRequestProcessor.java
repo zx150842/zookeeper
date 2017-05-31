@@ -34,6 +34,8 @@ import org.slf4j.LoggerFactory;
 /**
  * This RequestProcessor forwards any requests that modify the state of the
  * system to the Leader.
+ *
+ * 这个处理器将所有会改变系统状态的请求转发给leader
  */
 public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
         RequestProcessor {
@@ -41,6 +43,7 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
 
     FollowerZooKeeperServer zks;
 
+    // CommitProcessor
     RequestProcessor nextProcessor;
 
     LinkedBlockingQueue<Request> queuedRequests = new LinkedBlockingQueue<Request>();
@@ -93,6 +96,7 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                 case OpCode.setACL:
                 case OpCode.multi:
                 case OpCode.check:
+                    // 将写请求转发给leader
                     zks.getFollower().request(request);
                     break;
                 case OpCode.createSession:

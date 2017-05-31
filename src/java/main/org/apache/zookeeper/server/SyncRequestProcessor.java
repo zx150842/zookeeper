@@ -43,6 +43,8 @@ import org.slf4j.LoggerFactory;
  *             It never send ack back to the leader, so the nextProcessor will
  *             be null. This change the semantic of txnlog on the observer
  *             since it only contains committed txns.
+ *
+ * 用来将请求写到磁盘上。这个处理器会保证请求真正刷新到磁盘上之后才会调用之后的处理器
  */
 public class SyncRequestProcessor extends ZooKeeperCriticalThread implements
         RequestProcessor {
@@ -59,6 +61,8 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements
      * Transactions that have been written and are waiting to be flushed to
      * disk. Basically this is the list of SyncItems whose callbacks will be
      * invoked after flush returns successfully.
+     *
+     * 成功写入等待刷新到磁盘的事务。当成功刷新到磁盘后会调用回调函数
      */
     private final LinkedList<Request> toFlush = new LinkedList<Request>();
     private final Random r = new Random(System.nanoTime());
@@ -102,13 +106,18 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements
 
             // we do this in an attempt to ensure that not all of the servers
             // in the ensemble take a snapshot at the same time
+            // 保证集群中的server不会在同一时刻使用相同的快照
             int randRoll = r.nextInt(snapCount/2);
             while (true) {
                 Request si = null;
+                // 没有事务等待刷新到磁盘
                 if (toFlush.isEmpty()) {
+                    // 阻塞获取
                     si = queuedRequests.take();
                 } else {
+                    // 不阻塞获取，获取不到返回null
                     si = queuedRequests.poll();
+                    // 这里可以看出批量刷新的思想，只有在获取不到新的请求后，才将toFlush刷新到磁盘
                     if (si == null) {
                         flush(toFlush);
                         continue;
@@ -119,6 +128,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements
                 }
                 if (si != null) {
                     // track the number of records written to the log
+                    // 将请求写入事务文件
                     if (zks.getZKDatabase().append(si)) {
                         logCount++;
                         if (logCount > (snapCount / 2 + randRoll)) {
@@ -138,6 +148,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements
                                             }
                                         }
                                     };
+                                // 生成新快照
                                 snapInProcess.start();
                             }
                             logCount = 0;
@@ -155,7 +166,9 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements
                         }
                         continue;
                     }
+                    // 将写到磁盘缓冲的请求加入toFlush队列
                     toFlush.add(si);
+                    // 如果队列大于1000，则强制刷新
                     if (toFlush.size() > 1000) {
                         flush(toFlush);
                     }
@@ -175,8 +188,10 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements
         if (toFlush.isEmpty())
             return;
 
+        // 提交事务
         zks.getZKDatabase().commit();
         while (!toFlush.isEmpty()) {
+            // 当刷新成功后逐一将toFlush中的请求传递给下一个处理器
             Request i = toFlush.remove();
             if (nextProcessor != null) {
                 nextProcessor.processRequest(i);

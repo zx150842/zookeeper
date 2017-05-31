@@ -133,6 +133,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
     public void run() {
         try {
             while (true) {
+                // 从提交队列中阻塞获取请求
                 Request request = submittedRequests.take();
                 long traceMask = ZooTrace.CLIENT_REQUEST_TRACE_MASK;
                 if (request.type == OpCode.ping) {
@@ -141,6 +142,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
                 if (LOG.isTraceEnabled()) {
                     ZooTrace.logRequest(LOG, traceMask, 'P', request, "");
                 }
+                // 毒药请求，终止线程
                 if (Request.requestOfDeath == request) {
                     break;
                 }
@@ -422,6 +424,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
                 nodeRecord = getRecordForPath(path);
                 checkACL(zks, request.cnxn, nodeRecord.acl, ZooDefs.Perms.WRITE, request.authInfo, path, null);
                 int newVersion = checkAndIncVersion(nodeRecord.stat.getVersion(), setDataRequest.getVersion(), path);
+                // 修改request并向后续的处理器发送
                 request.setTxn(new SetDataTxn(path, setDataRequest.getData(), newVersion));
                 nodeRecord = nodeRecord.duplicate(request.getHdr().getZxid());
                 nodeRecord.stat.setVersion(newVersion);
@@ -635,7 +638,18 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
         }
     }
 
+    /**
+     * 解析请求创建create节点，并进行相关校验，并最终将创建的节点和修改的父节点副本保存到outstandingChange里面
+     *
+     * @param type
+     * @param request
+     * @param record
+     * @param deserialize
+     * @throws IOException
+     * @throws KeeperException
+     */
     private void pRequest2TxnCreate(int type, Request request, Record record, boolean deserialize) throws IOException, KeeperException {
+        // 反序列化请求，并将结果写入record中
         if (deserialize) {
             ByteBufferInputStream.byteBuffer2Record(request.request, record);
         }
@@ -645,6 +659,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
         List<ACL> acl;
         byte[] data;
         long ttl;
+        // 针对create node是否有过期时间，读取record数据
         if (type == OpCode.createTTL) {
             CreateTTLRequest createTtlRequest = (CreateTTLRequest)record;
             flags = createTtlRequest.getFlags();
@@ -660,6 +675,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
             data = createRequest.getData();
             ttl = 0;
         }
+        // 根据flags获取节点类型
         CreateMode createMode = CreateMode.fromFlag(flags);
         validateCreateRequest(createMode, request);
         String parentPath = validatePathForCreate(path, request.sessionId);
@@ -680,6 +696,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
         } catch (KeeperException.NoNodeException e) {
             // ignore this one
         }
+        //  临时节点不能创建子节点
         boolean ephemeralParent = EphemeralType.get(parentRecord.stat.getEphemeralOwner()) == EphemeralType.NORMAL;
         if (ephemeralParent) {
             throw new KeeperException.NoChildrenForEphemeralsException(path);
@@ -697,10 +714,12 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
         if (createMode.isEphemeral()) {
             s.setEphemeralOwner(request.sessionId);
         }
+        // 拷贝出父节点，进行修改后保存到outstandingChange里面
         parentRecord = parentRecord.duplicate(request.getHdr().getZxid());
         parentRecord.childCount++;
         parentRecord.stat.setCversion(newCversion);
         addChangeRecord(parentRecord);
+        // 将创建的子节点也保存到outstandingChange里面
         addChangeRecord(new ChangeRecord(request.getHdr().getZxid(), path, s, 0, listACL));
     }
 
@@ -736,6 +755,8 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
      * This method will be called inside the ProcessRequestThread, which is a
      * singleton, so there will be a single thread calling this code.
      *
+     * 这个方法由于只会被ProcessRequestThread这一个线程调用，所以这是一个安全的方法
+     *
      * @param request
      */
     protected void pRequest(Request request) throws RequestProcessorException {
@@ -749,6 +770,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
             case OpCode.createContainer:
             case OpCode.create:
             case OpCode.create2:
+                // 创建create请求，为请求生成zxid（单机id？）
                 CreateRequest create2Request = new CreateRequest();
                 pRequest2Txn(request.type, zks.getNextZxid(), request, create2Request, true);
                 break;
@@ -859,6 +881,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
                 break;
 
             //All the rest don't need to create a Txn - just verify session
+            // 对于所有的读请求，只检查session是否有效
             case OpCode.sync:
             case OpCode.exists:
             case OpCode.getData:

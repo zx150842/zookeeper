@@ -93,6 +93,8 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements
     /**
      * Requests that we are holding until commit comes in. Keys represent
      * session ids, each value is a linked list of the session's requests.
+     *
+     * 所有保存的还没有提交的请求，key是session id，value是排队的请求
      */
     protected final HashMap<Long, LinkedList<Request>> pendingRequests =
             new HashMap<Long, LinkedList<Request>>(10000);
@@ -100,7 +102,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements
     /** The number of requests currently being processed */
     protected final AtomicInteger numRequestsProcessing = new AtomicInteger(0);
 
-    RequestProcessor nextProcessor;
+    RequestProcessor nextProcessor; // Leader中是ToBeAppliedRequestProcessor，Follower和Observer中是FinalProcessor
 
     /** For testing purposes, we use a separated stopping condition for the
      * outer loop.*/
@@ -161,10 +163,14 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements
              * the number of request we poll from queuedRequests, since it is
              * possible to endlessly poll read requests from queuedRequests, and
              * that will lead to a starvation of non-local committed requests.
+             *
+             * 在下面的循环中每次最多处理queuedRequests队列中requestsToProcess数量的请求。
+             * 之所以限制每次从queuedRequests获取请求的数量，是因为可能会无穷尽的一直从
+             * queuedRequests队列获取请求，从而导致非本地提交的请求的饿死
              */
             int requestsToProcess = 0;
             boolean commitIsWaiting = false;
-			do {
+			      do {
                 /*
                  * Since requests are placed in the queue before being sent to
                  * the leader, if commitIsWaiting = true, the commit belongs to
@@ -175,9 +181,11 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements
                 commitIsWaiting = !committedRequests.isEmpty();
                 requestsToProcess =  queuedRequests.size();
                 // Avoid sync if we have something to do
+                // 双重check
                 if (requestsToProcess == 0 && !commitIsWaiting){
                     // Waiting for requests to process
                     synchronized (this) {
+                        // 如果没有待提交的请求或者没有新传入的请求则阻塞等待
                         while (!stopped && requestsToProcess == 0
                                 && !commitIsWaiting) {
                             wait();
@@ -191,14 +199,18 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements
                  * queue (queuedRequests), possibly less if a committed request
                  * is present along with a pending local write. After the loop,
                  * we process one committed request if commitIsWaiting.
+                 *
+                 * 首先处理queuedRequests队列中的请求
                  */
                 Request request = null;
                 while (!stopped && requestsToProcess > 0
                         && (request = queuedRequests.poll()) != null) {
                     requestsToProcess--;
+                    // 如果请求是事务请求，或者请求所在的session当前有在排队的请求，则当前请求需要排队
                     if (needCommit(request)
                             || pendingRequests.containsKey(request.sessionId)) {
                         // Add request to pending
+                        // 将排队请求保存到pendingRequests队列
                         LinkedList<Request> requests = pendingRequests
                                 .get(request.sessionId);
                         if (requests == null) {
@@ -208,6 +220,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements
                         requests.addLast(request);
                     }
                     else {
+                        // 对于非事务请求&&session中没有在这个请求之前的事务请求，则直接发送给下一个处理器
                         sendToNextProcessor(request);
                     }
                     /*
@@ -220,6 +233,8 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements
                      * committed request, the committed request must be for that
                      * pending write or for a write originating at a different
                      * server.
+                     *
+                     * 如果有准备提交的事务请求，则退出处理queuedRequests的循环，准备处理提交请求
                      */
                     if (!pendingRequests.isEmpty() && !committedRequests.isEmpty()){
                         /*
@@ -232,6 +247,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements
                 }
 
                 // Handle a single committed request
+                // 其次处理commit队列中提交的请求
                 if (commitIsWaiting && !stopped){
                     waitForEmptyPool();
 
@@ -274,6 +290,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements
                         request = topPending;
                     }
 
+                    // 将提交了的事务请求发送给下一个处理器
                     sendToNextProcessor(request);
 
                     waitForEmptyPool();
@@ -281,8 +298,12 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements
                     /*
                      * Process following reads if any, remove session queue if
                      * empty.
+                     *
+                     * 移除pendingRequests队列中之后的读请求
                      */
                     if (sessionQueue != null) {
+                        // 将pending中在这个事务请求后面的所有非事务请求都发送给下一个处理器
+                        // 这里可以看出写操作（事务操作）会阻塞后面的读操作
                         while (!stopped && !sessionQueue.isEmpty()
                                 && !needCommit(sessionQueue.peek())) {
                             sendToNextProcessor(sessionQueue.poll());
