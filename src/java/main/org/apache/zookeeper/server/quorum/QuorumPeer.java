@@ -647,6 +647,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     /**
      * Resolves hostname for a given server ID.
+     * 解析一个sid的hoastname
      *
      * This method resolves hostname for a given server ID in both quorumVerifer
      * and lastSeenQuorumVerifier. If the server ID matches the local server ID,
@@ -1095,8 +1096,10 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                            reconfigFlagClear();
                             if (shuttingDownLE) {
                                shuttingDownLE = false;
+                               // 设置选举算法
                                startLeaderElection();
-                               }
+                            }
+                            // 开始投票选举leader
                             setCurrentVote(makeLEStrategy().lookForLeader());
                         } catch (Exception e) {
                             LOG.warn("Unexpected exception", e);

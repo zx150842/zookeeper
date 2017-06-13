@@ -68,6 +68,8 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements
     private final Random r = new Random(System.nanoTime());
     /**
      * The number of log entries to log before starting a snapshot
+     *
+     * 写入多少个事务后开启一个新的快照
      */
     private static int snapCount = ZooKeeperServer.getSnapCount();
 
@@ -106,7 +108,9 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements
 
             // we do this in an attempt to ensure that not all of the servers
             // in the ensemble take a snapshot at the same time
-            // 保证集群中的server不会在同一时刻使用相同的快照
+            // 由于快照需要写磁盘IO，server在写快照的时候性能会下降，为了保证
+            // 集群的性能，这里通过随机数来保证集群中的所有server并不会在相同
+            // 的时间同时开始写快照
             int randRoll = r.nextInt(snapCount/2);
             while (true) {
                 Request si = null;
@@ -131,14 +135,23 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements
                     // 将请求写入事务文件
                     if (zks.getZKDatabase().append(si)) {
                         logCount++;
+                        // 判断是否需要写快照
+                        // 这里可以看到每个server在[snapCount/2, snapCount]
+                        // 之间都有可能开始写快照
                         if (logCount > (snapCount / 2 + randRoll)) {
+                            // 更新随机数
                             randRoll = r.nextInt(snapCount/2);
                             // roll the log
+                            // 先roll事务文件，这里可以看出每次在创建快照时，都会roll事务文件，
+                            // 所以一个事务文件中包含的事务在[snapCount/2, snapCount]之间
                             zks.getZKDatabase().rollLog();
                             // take a snapshot
+                            // 判断上一个写快照的线程是否还存活，如果存活说明上一个写快照
+                            // 的任务还没有执行完毕，会跳过当前的快照执行请求
                             if (snapInProcess != null && snapInProcess.isAlive()) {
                                 LOG.warn("Too busy to snap, skipping");
                             } else {
+                                // 开启写快照线程
                                 snapInProcess = new ZooKeeperThread("Snapshot Thread") {
                                         public void run() {
                                             try {
@@ -153,11 +166,13 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements
                             }
                             logCount = 0;
                         }
-                    } else if (toFlush.isEmpty()) {
+                    } else if (toFlush.isEmpty()) { // append返回false说明是读请求
                         // optimization for read heavy workloads
                         // iff this is a read, and there are no pending
                         // flushes (writes), then just pass this to the next
                         // processor
+                        // 这里针对读请求进行了优化，如果读请求之前没有待刷新到磁盘的
+                        // 写请求（保证严格的顺序），则这里直接将读请求发送给下一个处理器
                         if (nextProcessor != null) {
                             nextProcessor.processRequest(si);
                             if (nextProcessor instanceof Flushable) {

@@ -39,6 +39,9 @@ import org.slf4j.LoggerFactory;
  * is not initialized and set to null since we don't need it during
  * follower sync-up.
  *
+ * 这个类用来提供遍历磁盘反序列化的提案的接口。这个类每次只反序列化一个提案来
+ * 降低对内存的使用。需要说明的是提案中request部分没有被初始化并被设为null，
+ * 因为在与follower同步时不需要这个字段
  */
 public class TxnLogProposalIterator implements Iterator<Proposal> {
     private static final Logger LOG = LoggerFactory

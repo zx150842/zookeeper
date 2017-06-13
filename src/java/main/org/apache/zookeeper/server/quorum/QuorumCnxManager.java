@@ -59,7 +59,13 @@ import org.slf4j.LoggerFactory;
  * message to the tail of the queue, thus changing the order of messages.
  * Although this is not a problem for the leader election, it could be a problem
  * when consolidating peer communication. This is to be verified, though.
- * 
+ *
+ * 这个类用来管理leader选举的tcp连接。这个类为每一个server维护一个连接。这个类
+ * 要保证对于每个server只有一个连接与之相连。
+ * 这个类为每一个server维护一个发送队列。如果与某个server的连接断了，则发送线程
+ * 将要发送的消息重新放回list中。由于这个类当前使用队列来保存待发送给对端server
+ * 的消息，我们将消息放入队列末尾，在发送失败重新入队列时会改变消息的顺序。虽然
+ * 这不会影响leader选举，但在之后可能会被检查乱序的问题。
  */
 
 public class QuorumCnxManager {
@@ -109,8 +115,10 @@ public class QuorumCnxManager {
 
     /*
      * Mapping from Peer to Thread number
+     * sid -> sendWorker，为每个对端server创建一个发送消息的实例
      */
     final ConcurrentHashMap<Long, SendWorker> senderWorkerMap;
+    // sid -> sendqueue，为每个对端server保存一个消息发送队列
     final ConcurrentHashMap<Long, ArrayBlockingQueue<ByteBuffer>> queueSendMap;
     final ConcurrentHashMap<Long, ByteBuffer> lastMessageSent;
 
@@ -280,6 +288,7 @@ public class QuorumCnxManager {
             closeSocket(sock);
             // Otherwise proceed with the connection
         } else {
+            // 为每个对端server创建一个sendWorker和一个RecvWorker
             SendWorker sw = new SendWorker(sock, sid);
             RecvWorker rw = new RecvWorker(sock, sid, sw);
             sw.setRecv(rw);
@@ -399,6 +408,8 @@ public class QuorumCnxManager {
     public void toSend(Long sid, ByteBuffer b) {
         /*
          * If sending message to myself, then simply enqueue it (loopback).
+         * 如果收到的消息是自己发出的（因为发送消息时只是简单遍历所有投票server，所以会将消息发给自己）
+         * 这里简单的将消息保存到接收队列即可
          */
         if (self.getId() == sid) {
              b.position(0);
@@ -412,12 +423,15 @@ public class QuorumCnxManager {
               */
              ArrayBlockingQueue<ByteBuffer> bq = new ArrayBlockingQueue<ByteBuffer>(
                 SEND_CAPACITY);
+             // 为每个对端server创建一个发送队列
              ArrayBlockingQueue<ByteBuffer> oldq = queueSendMap.putIfAbsent(sid, bq);
+             // 将消息保存到发送队列中
              if (oldq != null) {
                  addToSendQueue(oldq, b);
              } else {
                  addToSendQueue(bq, b);
              }
+             // 与对端server建立连接
              connectOne(sid);
                 
         }
@@ -477,9 +491,11 @@ public class QuorumCnxManager {
             boolean knownId = false;
             // Resolve hostname for the remote server before attempting to
             // connect in case the underlying ip address has changed.
+            // 根据sid进行域名解析
             self.recreateSocketAddresses(sid);
             Map<Long, QuorumPeer.QuorumServer> lastCommittedView = self.getView();
             QuorumVerifier lastSeenQV = self.getLastSeenQuorumVerifier();
+            // 建立连接
             Map<Long, QuorumPeer.QuorumServer> lastProposedView = lastSeenQV.getAllMembers();
             if (lastCommittedView.containsKey(sid)) {
                 knownId = true;
@@ -990,6 +1006,9 @@ public class QuorumCnxManager {
      * Inserts an element in the {@link #recvQueue}. If the Queue is full, this
      * methods removes an element from the head of the Queue and then inserts
      * the element at the tail of the queue.
+     *
+     * 将收到的元素插入recvQueue末尾。如果队列满了，这个方法会移除队列头的元素，
+     * 并将收到的元素插入队尾
      *
      * This method is synchronized to achieve fairness between two threads that
      * are trying to insert an element in the queue. Each thread checks if the

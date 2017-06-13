@@ -112,6 +112,7 @@ public abstract class QuorumZooKeeperServer extends ZooKeeperServer {
         // session, and make the session creation request.  This is to
         // avoid another thread upgrading the session in parallel.
         synchronized (upgradeableSessionTracker) {
+            // 对于创建临时节点的请求，首先要创建一个createSession的请求并发送给leader
             if (upgradeableSessionTracker.isLocalSession(sessionId)) {
                 int timeout = upgradeableSessionTracker.upgradeSession(sessionId);
                 ByteBuffer to = ByteBuffer.allocate(4);

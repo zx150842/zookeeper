@@ -84,6 +84,7 @@ public class ProposalRequestProcessor implements RequestProcessor {
                     throw new RequestProcessorException(e.getMessage(), e);
                 }
                 // 将写请求写日志
+                // 这里的日志是按照zxid顺序写入的
                 syncProcessor.processRequest(request);
             }
         }

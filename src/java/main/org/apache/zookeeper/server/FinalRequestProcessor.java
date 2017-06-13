@@ -452,6 +452,7 @@ public class FinalRequestProcessor implements RequestProcessor {
         ReplyHeader hdr =
             new ReplyHeader(request.cxid, lastZxid, err.intValue());
 
+        // 更新指标统计
         zks.serverStats().updateLatency(request.createTime);
         cnxn.updateStatsForResponse(request.cxid, lastZxid, lastOp,
                     request.createTime, Time.currentElapsedTime());

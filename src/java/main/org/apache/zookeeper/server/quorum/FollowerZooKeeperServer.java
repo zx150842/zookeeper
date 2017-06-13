@@ -101,6 +101,9 @@ public class FollowerZooKeeperServer extends LearnerZooKeeperServer {
             return;
         }
         long firstElementZxid = pendingTxns.element().zxid;
+        // 如果收到的要提交的zxid != follower中待提交的第一个zxid，说明前一个zxid的follower发送的
+        // ack leader没有收到，或者前一个zxid的leader发送的commit follower没收到，这时follower直接
+        // 退出，保证内存数据库的有序性
         if (firstElementZxid != zxid) {
             LOG.error("Committing zxid 0x" + Long.toHexString(zxid)
                     + " but next pending txn 0x"
@@ -118,7 +121,7 @@ public class FollowerZooKeeperServer extends LearnerZooKeeperServer {
         }
 
         Request r = pendingSyncs.remove();
-		commitProcessor.commit(r);
+		    commitProcessor.commit(r);
     }
 
     @Override

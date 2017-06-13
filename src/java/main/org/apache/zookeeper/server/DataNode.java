@@ -54,6 +54,8 @@ public class DataNode implements Record {
      * the list of children for this node. note that the list of children string
      * does not contain the parent path -- just the last part of the path. This
      * should be synchronized on except deserializing (for speed up issues).
+     *
+     * children节点路径只包括相对父节点的路径，而不是绝对路径
      */
     private Set<String> children = null;
 

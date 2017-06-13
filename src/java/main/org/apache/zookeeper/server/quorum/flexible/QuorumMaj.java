@@ -34,8 +34,11 @@ import org.apache.zookeeper.server.quorum.QuorumPeerConfig.ConfigException;
  * 
  */
 public class QuorumMaj implements QuorumVerifier {
+    // 所有learner server map，sid -> quorumServer
     private Map<Long, QuorumServer> allMembers = new HashMap<Long, QuorumServer>();
+    // 可以投票的server map， sid -> quorumServer
     private HashMap<Long, QuorumServer> votingMembers = new HashMap<Long, QuorumServer>();
+    // 观察者server map，sid -> quorumServer
     private HashMap<Long, QuorumServer> observingMembers = new HashMap<Long, QuorumServer>();
     private long version = 0;
     private int half;
@@ -129,6 +132,8 @@ public class QuorumMaj implements QuorumVerifier {
     /**
      * Verifies if a set is a majority. Assumes that ackSet contains acks only
      * from votingMembers
+     *
+     * 如果ack过半数，则投票通过
      */
     public boolean containsQuorum(Set<Long> ackSet) {
         return (ackSet.size() > half);

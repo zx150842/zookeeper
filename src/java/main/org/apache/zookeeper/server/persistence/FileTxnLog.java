@@ -49,6 +49,8 @@ import org.slf4j.LoggerFactory;
 /**
  * This class implements the TxnLog interface. It provides api's
  * to access the txnlogs and add entries to it.
+ *
+ * 这个类对外暴露访问txnlog和向txnlog添加日志的功能
  * <p>
  * The format of a Transactional log is as follows:
  * <blockquote><pre>
@@ -91,6 +93,7 @@ import org.slf4j.LoggerFactory;
 public class FileTxnLog implements TxnLog {
     private static final Logger LOG;
 
+    // 64M
     static long preAllocSize =  65536 * 1024;
 
     public final static int TXNLOG_MAGIC =
@@ -163,11 +166,15 @@ public class FileTxnLog implements TxnLog {
 
     /**
      * rollover the current log file to a new one.
+     *
+     * 关闭当前事务文件，之后的事务写入新的文件
      * @throws IOException
      */
     public synchronized void rollLog() throws IOException {
         if (logStream != null) {
             this.logStream.flush();
+            // 这一步是关键，在append方法中会判断logStream是否为null
+            // 如果为null会重新创建一个新文件
             this.logStream = null;
             oa = null;
         }
@@ -188,6 +195,9 @@ public class FileTxnLog implements TxnLog {
     
     /**
      * append an entry to the transaction log
+     *
+     * 对外暴露的写事务日志方法，都是通过这个方法将事务添加到事务日志中
+     *
      * @param hdr the header of the transaction
      * @param txn the transaction part of the entry
      * returns true iff something appended, otw false 
@@ -196,11 +206,14 @@ public class FileTxnLog implements TxnLog {
         throws IOException
     {
         if (hdr != null) {
+            // 这里对于zxid在前面但是后写入的情况也没有限制，
+            // 只是加了一个warning
             if (hdr.getZxid() <= lastZxidSeen) {
                 LOG.warn("Current zxid " + hdr.getZxid()
                         + " is <= " + lastZxidSeen + " for "
                         + hdr.getType());
             }
+            // 如果当前没有文件流，则新建一个文件，并打开流
             if (logStream==null) {
                if(LOG.isInfoEnabled()){
                     LOG.info("Creating new log file: log." +  
@@ -217,6 +230,7 @@ public class FileTxnLog implements TxnLog {
                // Make sure that the magic number is written before padding.
                logStream.flush();
                currentSize = fos.getChannel().position();
+               // 向streamsToFlush增加待刷新的流
                streamsToFlush.add(fos);
             }
             padFile(fos);
@@ -248,6 +262,10 @@ public class FileTxnLog implements TxnLog {
      * Find the log file that starts at, or just before, the snapshot. Return
      * this and all subsequent logs. Results are ordered by zxid of file,
      * ascending order.
+     *
+     * 返回所有从snapshot开始，或snapshot之前的一个日志文件。返回的文件按照zxid
+     * 升序排列
+     *
      * @param logDirList array of files
      * @param snapshotZxid return files at, or before this zxid
      * @return
@@ -264,6 +282,7 @@ public class FileTxnLog implements TxnLog {
             }
             // the files
             // are sorted with zxid's
+            // 找到所有小于snapshotZxid的文件中最大的fzxid
             if (fzxid > logZxid) {
                 logZxid = fzxid;
             }
@@ -274,6 +293,7 @@ public class FileTxnLog implements TxnLog {
             if (fzxid < logZxid) {
                 continue;
             }
+            // 将所有从logZxid之后的文件返回
             v.add(f);
         }
         return v.toArray(new File[0]);
@@ -329,10 +349,11 @@ public class FileTxnLog implements TxnLog {
             logStream.flush();
         }
         for (FileOutputStream log : streamsToFlush) {
+            // 首先将缓存中的内容都刷到磁盘缓冲中
             log.flush();
             if (forceSync) {
                 long startSyncNS = System.nanoTime();
-
+                // 强制将磁盘缓冲的数据写入磁盘
                 log.getChannel().force(false);
 
                 syncElapsedMS = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startSyncNS);
@@ -585,15 +606,18 @@ public class FileTxnLog implements TxnLog {
             storedFiles = new ArrayList<File>();
             List<File> files = Util.sortDataDir(FileTxnLog.getLogFiles(logDir.listFiles(), 0), "log", false);
             for (File f: files) {
+                // 将所有大于zxid的日志添加到storedFiles中
                 if (Util.getZxidFromName(f.getName(), "log") >= zxid) {
                     storedFiles.add(f);
                 }
                 // add the last logfile that is less than the zxid
+                // 将小于zxid日志中最大的那个日志添加到storedFiles中
                 else if (Util.getZxidFromName(f.getName(), "log") < zxid) {
                     storedFiles.add(f);
                     break;
                 }
             }
+            // 初始化遍历器当前需要遍历的日志文件
             goToNextLog();
             if (!next())
                 return;

@@ -123,6 +123,11 @@ abstract class ClientCnxnSocket {
         incomingBuffer = ByteBuffer.allocate(len);
     }
 
+    /**
+     * 处理server对client连接请求的响应
+     *
+     * @throws IOException
+     */
     void readConnectResult() throws IOException {
         if (LOG.isTraceEnabled()) {
             StringBuilder buf = new StringBuilder("0x[");
@@ -148,6 +153,7 @@ abstract class ClientCnxnSocket {
             LOG.warn("Connected to an old server; r-o mode will be unavailable");
         }
 
+        // 获取server分配给client的sessionId
         this.sessionId = conRsp.getSessionId();
         sendThread.onConnected(conRsp.getTimeOut(), this.sessionId,
                 conRsp.getPasswd(), isRO);

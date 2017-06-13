@@ -365,6 +365,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
                                 Record record, boolean deserialize)
         throws KeeperException, IOException, RequestProcessorException
     {
+        // 对于写请求，需要设置TxnHeader头
         request.setHdr(new TxnHeader(request.sessionId, request.cxid, zxid,
                 Time.currentWallTime(), type));
 
@@ -640,6 +641,7 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
 
     /**
      * 解析请求创建create节点，并进行相关校验，并最终将创建的节点和修改的父节点副本保存到outstandingChange里面
+     * outstandingChange里面保存的数据只在最终的FinalProcessor里面与传入的request做了一个校验，并没有真正使用
      *
      * @param type
      * @param request
@@ -770,7 +772,9 @@ public class PrepRequestProcessor extends ZooKeeperCriticalThread implements
             case OpCode.createContainer:
             case OpCode.create:
             case OpCode.create2:
-                // 创建create请求，为请求生成zxid（单机id？）
+                // 创建create请求，为请求生成zxid（这里只用leader一台机器来生成zxid，所以只简单的自增即可）
+                // 当leader挂掉后，使用其他机器作为leader，并将zxid初始化为挂掉leader最后的zxid，保证zxid
+                // 的连续递增
                 CreateRequest create2Request = new CreateRequest();
                 pRequest2Txn(request.type, zks.getNextZxid(), request, create2Request, true);
                 break;

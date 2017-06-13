@@ -737,6 +737,7 @@ public class Leader {
         }
         
         // commit proposals in order
+        // 按序提交提案，如果在zxid小的提案没有获得通过之前，zxid大的提案会被禁止通过
         if (zxid != lastCommitted+1) {    
            LOG.warn("Commiting zxid 0x" + Long.toHexString(zxid)
                     + " from " + followerAddr + " not first!");
@@ -786,6 +787,8 @@ public class Leader {
         // commitProcessor 提交提案
         zk.commitProcessor.commit(p.request);
         // 如果当前提案需要同步，则强制调用sendSync方法
+        // 这说明sync时之前所有的请求都已经在集群过半保存，这时向
+        // 客户端发送sync响应
         if(pendingSyncs.containsKey(zxid)){
             for(LearnerSyncRequest r: pendingSyncs.remove(zxid)) {
                 sendSync(r);
@@ -798,6 +801,8 @@ public class Leader {
     /**
      * Keep a count of acks that are received by the leader for a particular
      * proposal
+     *
+     * 保存leader收到的某个提案的ack响应
      *
      * @param zxid, the zxid of the proposal sent out
      * @param sid, the id of the server that sent the ack
@@ -824,13 +829,15 @@ public class Leader {
              */
             return;
         }
-            
+
+        // 如果leader没有正在等待通过的提案，则直接返回
         if (outstandingProposals.size() == 0) {
             if (LOG.isDebugEnabled()) {
                 LOG.debug("outstanding is 0");
             }
             return;
         }
+        // 如果收到了已经通过了的提案的ack，则直接忽略
         if (lastCommitted >= zxid) {
             if (LOG.isDebugEnabled()) {
                 LOG.debug("proposal has already been committed, pzxid: 0x{} zxid: 0x{}",
@@ -851,7 +858,8 @@ public class Leader {
             LOG.debug("Count for zxid: 0x{} is {}",
                     Long.toHexString(zxid), p.ackSet.size());
         }*/
-        
+
+        // 尝试通过提案
         boolean hasCommitted = tryToCommit(p, zxid, followerAddr);
 
         // If p is a reconfiguration, multiple other operations may be ready to be committed,
@@ -946,6 +954,11 @@ public class Leader {
      *                the packet to be sent
      */
     void sendPacket(QuorumPacket qp) {
+        // 将提案发送给所有跟上leader的follower（与leader同步的follower）
+        // 这里要注意，zookeeper事务日志中的记录被认为是正确的，zookeeper不会再额外写一个commit之类的记录
+        // 即事务日志中的记录都是已经提交的。最后leader向follower发送的commit只是将内容写入内存数据库中
+        // 所以这里要保证发送提案的follower都是跟上leader的follower，这样才会保证follower的事务日志中不会
+        // 跳过某些没有保存的事务记录
         synchronized (forwardingFollowers) {
             for (LearnerHandler f : forwardingFollowers) {
                 f.queuePacket(qp);
@@ -1019,6 +1032,7 @@ public class Leader {
         sendObserverPacket(qp);
     }
 
+    // 最后一个提交投票的提案
     long lastProposed;
 
 
@@ -1040,6 +1054,7 @@ public class Leader {
 
     /**
      * create a proposal and send it out to all the members
+     * 对于事务请求，创建提案并发送给所有follower进行投票
      *
      * @param request
      * @return the proposal that is queued to send to all the members

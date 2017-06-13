@@ -61,6 +61,16 @@ import org.slf4j.LoggerFactory;
  *
  * Typical (default) thread counts are: on a 32 core machine, 1 accept thread,
  * 1 connection expiration thread, 4 selector threads, and 64 worker threads.
+ *
+ * NIOServerCnxnFactory使用NIO非阻塞socket实现了一个多线程的通信。在Factory中有以下几类的线程：
+ * 1个接收线程，用来接收来自客户端的连接
+ *
+ * 1-N个selector线程，一个Factory中支持多个selector，所以每个selector线程处理server请求的1/N。
+ * 建立多个selector线程的目的是由于当存在大量的连接时，select()方法本身会成为性能瓶颈
+ *
+ * 0-M个worker线程。用来处理socket读写请求。如果配置worker为0，则selector线程本身会处理socket IO
+ *
+ * 1个连接过期线程，用来关闭空闲的连接。这个线程主要用来关闭session失效的连接
  */
 public class NIOServerCnxnFactory extends ServerCnxnFactory {
     private static final Logger LOG = LoggerFactory.getLogger(NIOServerCnxnFactory.class);
@@ -178,6 +188,9 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
      * them across the SelectorThreads. It enforces maximum number of
      * connections per IP and attempts to cope with running out of file
      * descriptors by briefly sleeping before retrying.
+     *
+     * 接收线程接收新的连接请求并将请求发送给一个selector线程处理。接收线程限制了
+     * 每个IP的连接数
      */
     private class AcceptThread extends AbstractSelectThread {
         private final ServerSocketChannel acceptSocket;
@@ -259,6 +272,8 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
          * Mask off the listen socket interest ops and use select() to sleep
          * so that other threads can wake us up by calling wakeup() on the
          * selector.
+         *
+         * 暂停接收连接请求一段时间，缓解server压力
          */
         private void pauseAccept(long millisecs) {
             acceptKey.interestOps(0);
@@ -277,6 +292,9 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
          * handling. Returns whether pulled a connection off the accept queue
          * or not. If encounters an error attempts to fast close the socket.
          *
+         * 接收新的连接，限制每个IP的最大连接数。使用Round-robin算法选择一个selector线程
+         * 处理连接。
+         *
          * @return whether was able to accept a connection or not
          */
         private boolean doAccept() {
@@ -288,6 +306,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                 InetAddress ia = sc.socket().getInetAddress();
                 int cnxncount = getClientCnxnCount(ia);
 
+                // 限制每个IP的连接数
                 if (maxClientCnxns > 0 && cnxncount >= maxClientCnxns){
                     throw new IOException("Too many connections from " + ia
                                           + " - max is " + maxClientCnxns );
@@ -298,10 +317,12 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                 sc.configureBlocking(false);
 
                 // Round-robin assign this connection to a selector thread
+                // 循环遍历selector threads
                 if (!selectorIterator.hasNext()) {
                     selectorIterator = selectorThreads.iterator();
                 }
                 SelectorThread selectorThread = selectorIterator.next();
+                // 将sc发给selector thread
                 if (!selectorThread.addAcceptedConnection(sc)) {
                     throw new IOException(
                         "Unable to add connection to selector queue"
@@ -338,6 +359,13 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
      *
      * If there is no worker thread pool, the SelectorThread performs the I/O
      * directly.
+     *
+     * selector线程用来接收accept线程刚刚创建好的连接，并负责处理连接的读操作。
+     *
+     * 一个连接在生命周期中会绑定一个selector线程处理
+     *
+     * 如果存在worker线程，则连接的IO操作会调度给一个worker线程处理。当处理完毕
+     * 后，再将连接重新放入selector线程队列中，以供之后的selector监听
      */
     class SelectorThread extends AbstractSelectThread {
         private final int id;
@@ -357,6 +385,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
          * with the selector.
          */
         public boolean addAcceptedConnection(SocketChannel accepted) {
+            // 将accept的线程放入acceptedQueue队列，并唤醒selector
             if (stopped || !acceptedQueue.offer(accepted)) {
                 return false;
             }
@@ -428,6 +457,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                 Set<SelectionKey> selected = selector.selectedKeys();
                 ArrayList<SelectionKey> selectedList =
                     new ArrayList<SelectionKey>(selected);
+                // TODO 这里打乱了读写请求，为了防止某些连接的请求得不到处理？
                 Collections.shuffle(selectedList);
                 Iterator<SelectionKey> selectedKeys = selectedList.iterator();
                 while(!stopped && selectedKeys.hasNext()) {
@@ -438,6 +468,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
                         cleanupSelectionKey(key);
                         continue;
                     }
+                    // 处理读写请求
                     if (key.isReadable() || key.isWritable()) {
                         handleIO(key);
                     } else {
@@ -453,6 +484,9 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
          * Schedule I/O for processing on the connection associated with
          * the given SelectionKey. If a worker thread pool is not being used,
          * I/O is run directly by this thread.
+         *
+         * 实际处理连接的IO请求，如果worker thread pool没有配置，则直接使用
+         * selector thread来处理请求
          */
         private void handleIO(SelectionKey key) {
             IOWorkRequest workRequest = new IOWorkRequest(this, key);
@@ -463,6 +497,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             cnxn.disableSelectable();
             key.interestOps(0);
             touchCnxn(cnxn);
+            // 将IO请求提交给worker pool处理，如果pool中thread=0，则直接调用selector来执行
             workerPool.schedule(workRequest);
         }
 
@@ -681,6 +716,7 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
             selectorThreads.add(new SelectorThread(i));
         }
 
+        // 创建server socket，并赋值给acceptThread
         this.ss = ServerSocketChannel.open();
         ss.socket().setReuseAddress(true);
         LOG.info("binding to port " + addr);
@@ -738,18 +774,22 @@ public class NIOServerCnxnFactory extends ServerCnxnFactory {
     public void start() {
         stopped = false;
         if (workerPool == null) {
+            // socket I/O处理线程池
             workerPool = new WorkerService(
                 "NIOWorker", numWorkerThreads, false);
         }
+        // 启动所有的selector线程
         for(SelectorThread thread : selectorThreads) {
             if (thread.getState() == Thread.State.NEW) {
                 thread.start();
             }
         }
         // ensure thread is started once and only once
+        // 启动accept线程
         if (acceptThread.getState() == Thread.State.NEW) {
             acceptThread.start();
         }
+        // 启动expirer线程
         if (expirerThread.getState() == Thread.State.NEW) {
             expirerThread.start();
         }

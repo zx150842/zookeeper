@@ -98,6 +98,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     protected SessionTracker sessionTracker;
     private FileTxnSnapLog txnLogFactory = null;
     private ZKDatabase zkDb;
+    // 这里在启动的时候会根据日志设置初始的zxid
     private final AtomicLong hzxid = new AtomicLong(0);
     public final static Exception ok = new Exception("No prob");
     protected RequestProcessor firstProcessor;
@@ -277,6 +278,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
          *  
          * See ZOOKEEPER-1642 for more detail.
          */
+        // 设置初始的zxid
         if(zkDb.isInitialized()){
             setZxid(zkDb.getDataTreeLastProcessedZxid());
         }
@@ -684,6 +686,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
     public void reopenSession(ServerCnxn cnxn, long sessionId, byte[] passwd,
             int sessionTimeout) throws IOException {
         if (checkPasswd(sessionId, passwd)) {
+            // 重新更新session时间
             revalidateSession(cnxn, sessionId, sessionTimeout);
         } else {
             LOG.warn("Incorrect password from " + cnxn.getRemoteSocketAddress()
@@ -788,8 +791,10 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             touch(si.cnxn);
             boolean validpacket = Request.isValid(si.type);
             if (validpacket) {
+                // 将请求发送给第一个处理器处理
                 firstProcessor.processRequest(si);
                 if (si.cnxn != null) {
+                    // 更新正在处理的请求数
                     incInProcess();
                 }
             } else {
@@ -963,6 +968,13 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         return zkDb.getEphemerals();
     }
 
+    /**
+     * 处理client的连接请求
+     *
+     * @param cnxn
+     * @param incomingBuffer
+     * @throws IOException
+     */
     public void processConnectRequest(ServerCnxn cnxn, ByteBuffer incomingBuffer) throws IOException {
         BinaryInputArchive bia = BinaryInputArchive.getArchive(new ByteBufferInputStream(incomingBuffer));
         ConnectRequest connReq = new ConnectRequest();
@@ -990,6 +1002,8 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
             LOG.info(msg);
             throw new CloseRequestException(msg);
         }
+        // 如果client看到的zxid已经比server的最后的zxid大（这种情况会在client连接到一个server断掉后，
+        // 连接第二个server时发生），则直接拒绝连接
         if (connReq.getLastZxidSeen() > zkDb.dataTree.lastProcessedZxid) {
             String msg = "Refusing session request for client "
                 + cnxn.getRemoteSocketAddress()
@@ -1005,6 +1019,7 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         int sessionTimeout = connReq.getTimeOut();
         byte passwd[] = connReq.getPasswd();
         int minSessionTimeout = getMinSessionTimeout();
+        // 设置最大最小的sessin过期时间
         if (sessionTimeout < minSessionTimeout) {
             sessionTimeout = minSessionTimeout;
         }
@@ -1017,11 +1032,15 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         // session is setup
         cnxn.disableRecv();
         long sessionId = connReq.getSessionId();
+        // 如果client发来的sessionId=0（第一次连接上r/w zookeeper server）
+        // 则server为client创建sessionId
         if (sessionId == 0) {
             LOG.info("Client attempting to establish new session at "
                     + cnxn.getRemoteSocketAddress());
             createSession(cnxn, passwd, sessionTimeout);
         } else {
+            // 如果client发来了sessionId（可能是session重用）
+            // 则首先关闭session，之后再重新开启session
             long clientSessionId = connReq.getSessionId();
             LOG.info("Client attempting to renew session 0x"
                     + Long.toHexString(clientSessionId)
@@ -1044,6 +1063,13 @@ public class ZooKeeperServer implements SessionExpirer, ServerStats.Provider {
         return false;
     }
 
+    /**
+     * 处理除了建立session的连接请求之外的其他请求
+     *
+     * @param cnxn
+     * @param incomingBuffer
+     * @throws IOException
+     */
     public void processPacket(ServerCnxn cnxn, ByteBuffer incomingBuffer) throws IOException {
         // We have the request, now process and setup for next
         InputStream bais = new ByteBufferInputStream(incomingBuffer);

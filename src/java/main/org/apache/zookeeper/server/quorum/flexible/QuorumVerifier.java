@@ -28,6 +28,7 @@ import org.apache.zookeeper.server.quorum.QuorumPeer.QuorumServer;
  * containsQuorum, which verifies if a HashSet of server 
  * identifiers constitutes a quorum.
  *
+ * 验证server标识符集合是否构成过投票人数
  */
 
 public interface QuorumVerifier {

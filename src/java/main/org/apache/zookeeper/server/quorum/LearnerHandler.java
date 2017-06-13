@@ -103,6 +103,11 @@ public class LearnerHandler extends ZooKeeperThread {
      * It keeps track of only one proposal at a time, when the ACK for
      * that proposal arrives, it switches to the last proposal received
      * or clears the value if there is no pending proposal.
+     *
+     * 这个类控制leader等待learner响应一个提案的时间。如果等待时间超过上限，
+     * 则关闭与learner间的连接。这个类每次只追踪一个提案，当提案的ack到达时，
+     * 这个类会切换到最新的收到的提案或者清空跟踪的提案（如果没有新的提案
+     * 提交的话）
      */
     private class SyncLimitCheck {
         private boolean started = false;
@@ -134,7 +139,7 @@ public class LearnerHandler extends ZooKeeperThread {
                  currentZxid = nextZxid;
                  nextTime = 0;
                  nextZxid = 0;
-             } else if (nextZxid == zxid) {
+             } else if (nextZxid == zxid) { // 下一个提案的ack早于上一个提案的ack到达
                  LOG.warn("ACK for " + zxid + " received before ACK for " + currentZxid + "!!!!");
                  nextTime = 0;
                  nextZxid = 0;
@@ -417,7 +422,7 @@ public class LearnerHandler extends ZooKeeperThread {
                     LOG.error(ackEpochPacket.toString()
                             + " is not ACKEPOCH");
                     return;
-				}
+				    }
                 ByteBuffer bbepoch = ByteBuffer.wrap(ackEpochPacket.getData());
                 ss = new StateSummary(bbepoch.getInt(), ackEpochPacket.getZxid());
                 leader.waitForEpochAck(this.getSid(), ss);

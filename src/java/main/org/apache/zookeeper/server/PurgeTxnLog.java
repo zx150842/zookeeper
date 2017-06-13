@@ -40,6 +40,10 @@ import org.slf4j.LoggerFactory;
  * Invocation of this class will clean up the datalogdir
  * files and snapdir files keeping the last "-n" snapshot files
  * and the corresponding logs.
+ *
+ * 这个类用来定时清除快照和事务文件。这个类通常被zookeeper server
+ * 上以cron任务执行。这个类会只保留最近的n个快照文件和对应的日志
+ * 文件
  */
 public class PurgeTxnLog {
     private static final Logger LOG = LoggerFactory.getLogger(PurgeTxnLog.class);
@@ -64,27 +68,35 @@ public class PurgeTxnLog {
      * during this process, these newest N snapshots or any data logs will be
      * excluded from current purging cycle.
      *
+     * 保留最近的num个快照和对应的日志文件，清除之前的文件。如果在清除任务执行
+     * 时，一个新的日志文件或快照正在建立，则近建立的快照或日志文件不在当前的
+     * 清除循环中
+     *
      * @param dataDir the dir that has the logs
      * @param snapDir the dir that has the snapshots
      * @param num the number of snapshots to keep
      * @throws IOException
      */
     public static void purge(File dataDir, File snapDir, int num) throws IOException {
+        // 最少要保存3个文件
         if (num < 3) {
             throw new IllegalArgumentException(COUNT_ERR_MSG);
         }
 
         FileTxnSnapLog txnLog = new FileTxnSnapLog(dataDir, snapDir);
 
+        // 获得最近的快照文件，新的文件排在旧的文件之前
         List<File> snaps = txnLog.findNRecentSnapshots(num);
         int numSnaps = snaps.size();
         if (numSnaps > 0) {
+            // snaps中最后一个文件就是num个快照文件中最老的文件
             purgeOlderSnapshots(txnLog, snaps.get(numSnaps - 1));
         }
     }
 
     // VisibleForTesting
     static void purgeOlderSnapshots(FileTxnSnapLog txnLog, File snapShot) {
+        // 获取snapShot文件名的zxid
         final long leastZxidToBeRetain = Util.getZxidFromName(
                 snapShot.getName(), PREFIX_SNAPSHOT);
 
@@ -92,6 +104,8 @@ public class PurgeTxnLog {
          * We delete all files with a zxid in their name that is less than leastZxidToBeRetain.
          * This rule applies to both snapshot files as well as log files, with the following
          * exception for log files.
+         *
+         * 这里删除所有文件名中的zxid小于leastZxidToBeRetain的快照或日志文件
          *
          * A log file with zxid less than X may contain transactions with zxid larger than X.  More
          * precisely, a log file named log.(X-a) may contain transactions newer than snapshot.X if
@@ -125,6 +139,8 @@ public class PurgeTxnLog {
                 if (retainedTxnLogs.contains(f)) {
                     return false;
                 }
+                // 这里可以看到，如果在这个方法执行的同时，产生了新的快照或日志文件，
+                // 则是不会在当前的清理任务中清理刚刚过期的文件的
                 long fZxid = Util.getZxidFromName(f.getName(), prefix);
                 if (fZxid >= leastZxidToBeRetain) {
                     return false;
@@ -133,6 +149,7 @@ public class PurgeTxnLog {
             }
         }
         // add all non-excluded log files
+        // 获得所有待删除的日志文件
         File[] logs = txnLog.getDataDir().listFiles(new MyFileFilter(PREFIX_LOG));
         List<File> files = new ArrayList<>();
         if (logs != null) {
@@ -140,6 +157,7 @@ public class PurgeTxnLog {
         }
 
         // add all non-excluded snapshot files to the deletion list
+        // 获得所有待删除的快照文件
         File[] snapshots = txnLog.getSnapDir().listFiles(new MyFileFilter(PREFIX_SNAPSHOT));
         if (snapshots != null) {
             files.addAll(Arrays.asList(snapshots));

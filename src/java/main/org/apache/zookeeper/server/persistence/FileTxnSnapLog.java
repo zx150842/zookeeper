@@ -44,6 +44,8 @@ import org.slf4j.LoggerFactory;
  * above the implementations
  * of txnlog and snapshot
  * classes
+ *
+ * 这个类是对外暴露txnlog和snapshot功能的帮助类
  */
 public class FileTxnSnapLog {
     //the directory containing the
@@ -75,6 +77,8 @@ public class FileTxnSnapLog {
      * restore to gather information
      * while the data is being
      * restored.
+     *
+     * 这个监听器用来向外部api暴露内存数据库创建完成的事件
      */
     public interface PlayBackListener {
         void onTxnLoaded(TxnHeader hdr, Record rec);
@@ -165,6 +169,8 @@ public class FileTxnSnapLog {
      * this function restores the server
      * database after reading from the
      * snapshots and transaction logs
+     *
+     * 使用快照和事务日志文件来重建内存数据库
      * @param dt the datatree to be restored
      * @param sessions the sessions to be restored
      * @param listener the playback listener to run on the
@@ -174,6 +180,7 @@ public class FileTxnSnapLog {
      */
     public long restore(DataTree dt, Map<Long, Integer> sessions,
             PlayBackListener listener) throws IOException {
+        // 找到最近有效的snapLog，并根据快照重建datatree，返回最大的zxid
         long deserializeResult = snapLog.deserialize(dt, sessions);
         FileTxnLog txnLog = new FileTxnLog(dataDir);
         boolean trustEmptyDB;
@@ -207,6 +214,7 @@ public class FileTxnSnapLog {
                 return -1L;
             }
         }
+        // 读取事务日志中所有在快照开始以及之后的日志
         TxnIterator itr = txnLog.read(dt.lastProcessedZxid+1);
         long highestZxid = dt.lastProcessedZxid;
         TxnHeader hdr;
@@ -219,6 +227,9 @@ public class FileTxnSnapLog {
                     //empty logs
                     return dt.lastProcessedZxid;
                 }
+                // TODO 这里也就对顺序不一致的zxid报了一个error？
+                // zxid小的但是在日志后面的记录不会覆盖掉之前的记录吗？
+                // TODO 这里应该也可以，因为在之后还会与leader同步数据，这样之后的数据还能找回来
                 if (hdr.getZxid() < highestZxid && highestZxid != 0) {
                     LOG.error("{}(higestZxid) > {}(next log) for type {}",
                             new Object[] { highestZxid, hdr.getZxid(),
@@ -227,11 +238,18 @@ public class FileTxnSnapLog {
                     highestZxid = hdr.getZxid();
                 }
                 try {
+                    // 将快照之后的事务添加到datatree中
                     processTransaction(hdr,dt,sessions, itr.getTxn());
                 } catch(KeeperException.NoNodeException e) {
+                    // TODO 猜测zookeeper允许在恢复时，跳过一些漏掉的日志，因为日志的操作都是幂等的，
+                    // 除了要先create node，再set data之类的请求？
+                    // FIXME 还是不应该漏掉日志，因为漏掉的可能是对节点的操作，而之后没有再对同一个
+                    // 节点的操作，这样拿到最大的zxid后，与leader同步之后的数据，之前漏掉的数据就找
+                    // 不回来了
                    throw new IOException("Failed to process transaction type: " +
                          hdr.getType() + " error: " + e.getMessage(), e);
                 }
+                // 将事务添加到ZKDataBase中的committedLog队列中
                 listener.onTxnLoaded(hdr, itr.getTxn());
                 if (!itr.next())
                     break;
@@ -273,6 +291,7 @@ public class FileTxnSnapLog {
     
     /**
      * process the transaction on the datatree
+     * 将事务添加到datatree上
      * @param hdr the hdr of the transaction
      * @param dt the datatree to apply transaction to
      * @param sessions the sessions to be restored
@@ -342,6 +361,7 @@ public class FileTxnSnapLog {
             ConcurrentHashMap<Long, Integer> sessionsWithTimeouts)
         throws IOException {
         long lastZxid = dataTree.lastProcessedZxid;
+        // snapshot文件名zxid为开始快照时datatree中最大的zxid
         File snapshotFile = new File(snapDir, Util.makeSnapshotName(lastZxid));
         LOG.info("Snapshotting: 0x{} to {}", Long.toHexString(lastZxid),
                 snapshotFile);
@@ -404,6 +424,9 @@ public class FileTxnSnapLog {
      * This includes logs with starting zxid greater than given zxid, as well as the
      * newest transaction log with starting zxid less than given zxid.  The latter log
      * file may contain transactions beyond given zxid.
+     *
+     * 返回所有包含的事务大于给定的zxid以及小于zxid中最大的日志文件
+     *
      * @param zxid the zxid that contains logs greater than
      * zxid
      * @return

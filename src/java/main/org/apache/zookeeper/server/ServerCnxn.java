@@ -40,6 +40,8 @@ import org.slf4j.LoggerFactory;
 /**
  * Interface to a Server connection - represents a connection from a client
  * to the server.
+ *
+ * server连接的接口，表示一个从client到server的连接
  */
 public abstract class ServerCnxn implements Stats, Watcher {
     // This is just an arbitrary object to represent requests issued by

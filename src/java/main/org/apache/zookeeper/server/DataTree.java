@@ -75,6 +75,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * The tree maintains two parallel data structures: a hashtable that maps from
  * full paths to DataNodes and a tree of DataNodes. All accesses to a path is
  * through the hashtable. The tree is traversed only when serializing to disk.
+ *
+ * 这个类维护了数结构。这个类没有任何网络或客户端连接的实现。这个类的tree维护
+ * 了两个平行的数据结构：一个map维护了路径到datanode的映射，以及一个datanode
+ * 的tree。所有对路径的访问都是通过这个map。tree用来将内存数据序列化到磁盘中。
  */
 public class DataTree {
     private static final Logger LOG = LoggerFactory.getLogger(DataTree.class);
@@ -233,6 +237,7 @@ public class DataTree {
     
     public DataTree() {
         /* Rather than fight it, let root have an alias */
+        // 创建内存树，并添加系统节点
         nodes.put("", root);
         nodes.put(rootZookeeper, root);
 
@@ -266,6 +271,8 @@ public class DataTree {
 
     /**
      * is the path one of the special paths owned by zookeeper.
+     *
+     * 判断路径是否是zookeeper系统自有路径
      *
      * @param path
      *            the path to be checked
@@ -457,6 +464,7 @@ public class DataTree {
         if (parent == null) {
             throw new KeeperException.NoNodeException();
         }
+        // 将节点添加到父节点下，这里需要对父节点加锁
         synchronized (parent) {
             Set<String> children = parent.getChildren();
             if (children.contains(childName)) {
@@ -512,7 +520,9 @@ public class DataTree {
             updateCount(lastPrefix, 1);
             updateBytes(lastPrefix, data == null ? 0 : data.length);
         }
+        // 触发NodeCreated事件
         dataWatches.triggerWatch(path, Event.EventType.NodeCreated);
+        // 触发NodeChildrenChanged事件
         childWatches.triggerWatch(parentName.equals("") ? "/" : parentName,
                 Event.EventType.NodeChildrenChanged);
     }
@@ -772,6 +782,14 @@ public class DataTree {
 
     public volatile long lastProcessedZxid = 0;
 
+    /**
+     * 对外暴露的更新内存数据库的方法，最终都是调用这个方法来更新
+     * 内存数据
+     *
+     * @param header
+     * @param txn
+     * @return
+     */
     public ProcessTxnResult processTxn(TxnHeader header, Record txn)
     {
         ProcessTxnResult rc = new ProcessTxnResult();
@@ -976,6 +994,10 @@ public class DataTree {
          *
          * Note, such failures on DT should be seen only during
          * restore.
+         *
+         * 这里针对模糊快照中创建节点进行了处理。因为读取的是快照开始之后所有
+         * 的事务日志，所以可能出现快照中已经创建了节点，而事务日志中也有创建
+         * 节点的日志，在恢复时就会出现节点存在的情况。
          */
         if (header.getType() == OpCode.create &&
                 rc.err == Code.NODEEXISTS.intValue()) {
@@ -992,7 +1014,7 @@ public class DataTree {
                       parentName, e);
                 rc.err = e.code().intValue();
             }
-        } else if (rc.err != Code.OK.intValue()) {
+        } else if (rc.err != Code.OK.intValue()) { // 这里可以看到对于重复的操作，这里直接抛出失败，不再重复执行
             LOG.debug("Ignoring processTxn failure hdr: " + header.getType() +
                   " : error: " + rc.err);
         }
@@ -1324,6 +1346,8 @@ public class DataTree {
     public void setWatches(long relativeZxid, List<String> dataWatches,
             List<String> existWatches, List<String> childWatches,
             Watcher watcher) {
+        // 对节点添加watcher，如果添加时节点已经发生了变化，则直接触发watcher.process方法，
+        // 而不用将watcher保存到WatchManager中
         for (String path : dataWatches) {
             DataNode node = getNode(path);
             WatchedEvent e = null;

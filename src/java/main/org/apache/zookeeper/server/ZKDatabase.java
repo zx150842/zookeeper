@@ -65,6 +65,8 @@ import org.slf4j.LoggerFactory;
  *
  * zookeeper内存数据库，用来保存session信息，znode节点树，和提交日志。
  * 在启动时，会将从磁盘上的日志和快照恢复
+ *
+ * 这个类可以看做是一个对FileTxnSnapLog和DataTree的代理类，实际的处理方法最终都是调用DataTree或FileTxnSnapLog中的方法
  */
 public class ZKDatabase {
 
@@ -76,7 +78,9 @@ public class ZKDatabase {
      */
     protected DataTree dataTree;
     protected ConcurrentHashMap<Long, Integer> sessionsWithTimeouts;
+    // 用于底层进行事务和快照的类，这个类集成了TxnLog和SnapShot两个类
     protected FileTxnSnapLog snapLog;
+    // 在启动时，快照后的最小和最大的事务zxid
     protected long minCommittedLog, maxCommittedLog;
     
     /**
@@ -214,6 +218,9 @@ public class ZKDatabase {
     /**
      * load the database from the disk onto memory and also add
      * the transactions to the committedlog in memory.
+     *
+     * 将磁盘上的最新有效的快照文件载入内存，创建内存数据库，
+     * 同时将committedlog中的记录添加到内存数据库中
      * @return the last valid zxid on disk
      * @throws IOException
      */
@@ -234,6 +241,8 @@ public class ZKDatabase {
      * maintains a list of last <i>committedLog</i>
      *  or so committed requests. This is used for
      * fast follower synchronization.
+     *
+     * 将最近提交的记录保存到committedLog中
      * @param request committed request
      */
     public void addCommittedProposal(Request request) {
@@ -496,6 +505,8 @@ public class ZKDatabase {
 
     /**
      * Truncate the ZKDatabase to the specified zxid
+     *
+     * 将zxid之后的记录删除，并重新load database
      * @param zxid the zxid to truncate zk database to
      * @return true if the truncate is successful and false if not
      * @throws IOException

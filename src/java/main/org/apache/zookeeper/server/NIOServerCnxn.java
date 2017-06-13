@@ -175,9 +175,9 @@ public class NIOServerCnxn extends ServerCnxn {
         if (incomingBuffer.remaining() == 0) { // have we read length bytes?
             packetReceived();
             incomingBuffer.flip();
-            if (!initialized) {
+            if (!initialized) { // 处理连接请求
                 readConnectRequest();
-            } else {
+            } else { // 处理其他请求
                 readRequest();
             }
             lenBuffer.clear();
@@ -308,6 +308,8 @@ public class NIOServerCnxn extends ServerCnxn {
 
     /**
      * Handles read/write IO on connection.
+     *
+     * 实际处理连接IO请求
      */
     void doIO(SelectionKey k) throws InterruptedException {
         try {

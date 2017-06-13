@@ -51,6 +51,9 @@ public enum CreateMode {
      * Given this property, you should be prepared to get
      * {@link org.apache.zookeeper.KeeperException.NoNodeException}
      * when creating children inside of this container node.
+     *
+     * container类型的node只有在子节点存在时才会存在，当没有子节点后，container节点
+     * 会在之后的某个时间被zookeeper删除。这个类型的节点主要用来实现leader，lock等功能
      */
     CONTAINER (4, false, false, true, false),
     /**

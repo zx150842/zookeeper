@@ -102,6 +102,8 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
                 case OpCode.createSession:
                 case OpCode.closeSession:
                     // Don't forward local sessions to the leader.
+                    // 不需要将本地session的请求转发给leader
+                    // 只需要将全局session的请求转发给leader
                     if (!request.isLocalSession()) {
                         zks.getFollower().request(request);
                     }
@@ -132,6 +134,9 @@ public class FollowerRequestProcessor extends ZooKeeperCriticalThread implements
             } catch (IOException ie) {
                 LOG.error("Unexpected error in upgrade", ie);
             }
+            // 对于临时节点创建，
+            // 需要将local session升级为global session，所以在执行create操作前
+            // 先要提交一个create session请求
             if (upgradeRequest != null) {
                 queuedRequests.add(upgradeRequest);
             }

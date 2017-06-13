@@ -95,6 +95,7 @@ import org.slf4j.MDC;
  * of available servers to connect to and "transparently" switches servers it is
  * connected to as needed.
  *
+ * 管理客户端socket的类。这个类维护了一个可用的server列表，供连接server使用
  */
 public class ClientCnxn {
     private static final Logger LOG = LoggerFactory.getLogger(ClientCnxn.class);
@@ -139,6 +140,8 @@ public class ClientCnxn {
      * "real" timeout, not the timeout request by the client (which may have
      * been increased/decreased by the server which applies bounds to this
      * value.
+     *
+     * 服务端保存的client session的实际过期时间
      */
     private volatile int negotiatedSessionTimeout;
 
@@ -184,6 +187,8 @@ public class ClientCnxn {
     /**
      * Is set to true when a connection to a r/w server is established for the
      * first time; never changed afterwards.
+     *
+     * 这个变量只被设置一次，用来标示client之前是否创建过与r/w server的连接
      * <p>
      * Is used to handle situations when client without sessionId connects to a
      * read-only server. Such client receives "fake" sessionId from read-only
@@ -456,6 +461,7 @@ public class ClientCnxn {
             final Set<Watcher> watchers;
             if (materializedWatchers == null) {
                 // materialize the watchers based on the event
+                // 获取与Event相关的所有注册的watcher
                 watchers = watcher.materialize(event.getState(),
                         event.getType(), event.getPath());
             } else {
@@ -464,6 +470,7 @@ public class ClientCnxn {
             }
             WatcherSetEventPair pair = new WatcherSetEventPair(watchers, event);
             // queue the pair (watch set & event) for later processing
+            // 将event和对应的watcher set存入waitingEvents队列，供后续处理
             waitingEvents.add(pair);
         }
 
@@ -521,6 +528,7 @@ public class ClientCnxn {
                   WatcherSetEventPair pair = (WatcherSetEventPair) event;
                   for (Watcher watcher : pair.watchers) {
                       try {
+                          // 调用watcher.process方法处理event
                           watcher.process(pair.event);
                       } catch (Throwable t) {
                           LOG.error("Error while calling watcher ", t);
@@ -550,7 +558,7 @@ public class ClientCnxn {
                         ((VoidCallback) lcb.cb).processResult(lcb.rc, lcb.path,
                                 lcb.ctx);
                     }
-                } else {
+                } else { // 处理server返回的响应
                   Packet p = (Packet) event;
                   int rc = 0;
                   String clientPath = p.clientPath;
@@ -564,6 +572,7 @@ public class ClientCnxn {
                           || p.response instanceof SetACLResponse) {
                       StatCallback cb = (StatCallback) p.cb;
                       if (rc == 0) {
+                          // 调用各种回调函数
                           if (p.response instanceof ExistsResponse) {
                               cb.processResult(rc, clientPath, p.ctx,
                                       ((ExistsResponse) p.response)
@@ -708,6 +717,7 @@ public class ClientCnxn {
             }
         } else {
             p.finished = true;
+            // 将收到响应的packet保存到waitingEvents队列中
             eventThread.queuePacket(p);
         }
     }
@@ -791,6 +801,8 @@ public class ClientCnxn {
     /**
      * This class services the outgoing request queue and generates the heart
      * beats. It also spawns the ReadThread.
+     *
+     * 将待发送请求（outgoing）发送到server，并定时发送心跳
      */
     class SendThread extends ZooKeeperThread {
         private long lastPingSentNs;
@@ -886,6 +898,7 @@ public class ClientCnxn {
              * to the first request!
              */
             try {
+                // 根据xid从pendingQueue中找到发送的那个packet
                 if (packet.requestHeader.getXid() != replyHdr.getXid()) {
                     packet.replyHeader.setErr(
                             KeeperException.Code.CONNECTIONLOSS.intValue());
@@ -898,6 +911,7 @@ public class ClientCnxn {
                             + packet );
                 }
 
+                // 设置本地packet的ReplyHeader参数
                 packet.replyHeader.setXid(replyHdr.getXid());
                 packet.replyHeader.setErr(replyHdr.getErr());
                 packet.replyHeader.setZxid(replyHdr.getZxid());
@@ -950,6 +964,7 @@ public class ClientCnxn {
                     clientCnxnSocket.getRemoteSocketAddress());
             isFirstConnect = false;
             long sessId = (seenRwServerBefore) ? sessionId : 0;
+            // 创建一个连接请求
             ConnectRequest conReq = new ConnectRequest(0, lastZxid,
                     sessionTimeout, sessId, sessionPasswd);
             // We add backwards since we are pushing into the front
@@ -1009,6 +1024,7 @@ public class ClientCnxn {
                         OpCode.auth), null, new AuthPacket(0, id.scheme,
                         id.data), null, null));
             }
+            // 将连接请求放入发送队列，以发送给server
             outgoingQueue.addFirst(new Packet(null, null, conReq,
                     null, null, readOnly));
             clientCnxnSocket.connectionPrimed();
@@ -1054,6 +1070,7 @@ public class ClientCnxn {
         private boolean saslLoginFailed = false;
 
         private void startConnect() throws IOException {
+            // 如果不是第一个连接，则这里随机等待最多1s
             if(!isFirstConnect){
                 try {
                     Thread.sleep(r.nextInt(1000));
@@ -1063,6 +1080,7 @@ public class ClientCnxn {
             }
             state = States.CONNECTING;
 
+            // 获取server连接地址
             InetSocketAddress addr;
             if (rwServerAddress != null) {
                 addr = rwServerAddress;
@@ -1094,7 +1112,7 @@ public class ClientCnxn {
                 }
             }
             logStartConnect(addr);
-
+            // 建立连接
             clientCnxnSocket.connect(addr);
         }
 
@@ -1117,7 +1135,9 @@ public class ClientCnxn {
             ", closing socket connection and attempting reconnect";
         @Override
         public void run() {
+            // 将参数设置到ClientCnxnSocket中
             clientCnxnSocket.introduce(this, sessionId, outgoingQueue);
+            // 更新时间
             clientCnxnSocket.updateNow();
             clientCnxnSocket.updateLastSendAndHeard();
             int to;
@@ -1125,11 +1145,15 @@ public class ClientCnxn {
             final int MAX_SEND_PING_INTERVAL = 10000; //10 seconds
             while (state.isAlive()) {
                 try {
+                    // 建立与server的连接
+                    // 这里也可以看出在客户端存活的周期内，如果与server的连接断掉的话
+                    // 客户端会调用startConnect方法来重连server（可能不是同一个server）
                     if (!clientCnxnSocket.isConnected()) {
                         // don't re-establish connection if we are closing
                         if (closing) {
                             break;
                         }
+                        // 从server列表中选择一个server并与之建立连接
                         startConnect();
                         clientCnxnSocket.updateLastSendAndHeard();
                     }
@@ -1187,7 +1211,9 @@ public class ClientCnxn {
                         int timeToNextPing = readTimeout / 2 - clientCnxnSocket.getIdleSend() - 
                         		((clientCnxnSocket.getIdleSend() > 1000) ? 1000 : 0);
                         //send a ping request either time is due or no packet sent out within MAX_SEND_PING_INTERVAL
+                        //定时向server发送ping保持tcp连接活性
                         if (timeToNextPing <= 0 || clientCnxnSocket.getIdleSend() > MAX_SEND_PING_INTERVAL) {
+                            // 生成ping请求并放入outgoing队列，发送到server
                             sendPing();
                             clientCnxnSocket.updateLastSend();
                         } else {
@@ -1211,6 +1237,8 @@ public class ClientCnxn {
                         to = Math.min(to, pingRwTimeout - idlePingRwServer);
                     }
 
+                    // 真正处理读写请求，每次会在selector中等待waitTimeOut(to)长时间，来等待读写请求
+                    // 如果在这段时间内存在读写请求，则会调用doIO处理
                     clientCnxnSocket.doTransport(to, pendingQueue, ClientCnxn.this);
                 } catch (Throwable e) {
                     if (closing) {
@@ -1261,6 +1289,7 @@ public class ClientCnxn {
             }
             clientCnxnSocket.close();
             if (state.isAlive()) {
+                // 向EventThread发送Disconnected消息
                 eventThread.queueEvent(new WatchedEvent(Event.EventType.None,
                         Event.KeeperState.Disconnected, null));
             }
@@ -1353,6 +1382,7 @@ public class ClientCnxn {
         void onConnected(int _negotiatedSessionTimeout, long _sessionId,
                 byte[] _sessionPasswd, boolean isRO) throws IOException {
             negotiatedSessionTimeout = _negotiatedSessionTimeout;
+            // 如果session已经过期，则向eventThread发送过期的事件
             if (negotiatedSessionTimeout <= 0) {
                 state = States.CLOSED;
 
@@ -1370,6 +1400,7 @@ public class ClientCnxn {
             if (!readOnly && isRO) {
                 LOG.error("Read/write client got connected to read-only server");
             }
+            // session有效，则进行设置
             readTimeout = negotiatedSessionTimeout * 2 / 3;
             connectTimeout = negotiatedSessionTimeout / hostProvider.size();
             hostProvider.onConnected();
@@ -1494,6 +1525,7 @@ public class ClientCnxn {
         ReplyHeader r = new ReplyHeader();
         Packet packet = queuePacket(h, r, request, response, null, null, null,
                 null, watchRegistration, watchDeregistration);
+        // 在这里阻塞等待server响应packet
         synchronized (packet) {
             while (!packet.finished) {
                 packet.wait();
@@ -1539,6 +1571,7 @@ public class ClientCnxn {
         // Note that we do not generate the Xid for the packet yet. It is
         // generated later at send-time, by an implementation of ClientCnxnSocket::doIO(),
         // where the packet is actually sent.
+        // 注意这里没有生成xid，xid在真正发送包的时候才生成
         packet = new Packet(h, r, request, response, watchRegistration);
         packet.cb = cb;
         packet.ctx = ctx;
@@ -1558,6 +1591,7 @@ public class ClientCnxn {
                 if (h.getType() == OpCode.closeSession) {
                     closing = true;
                 }
+                // 将待发送包保存到发送队列中
                 outgoingQueue.add(packet);
             }
         }

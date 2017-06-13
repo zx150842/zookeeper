@@ -47,6 +47,9 @@ import org.apache.zookeeper.server.util.SerializeUtils;
  * it is responsible for storing, serializing
  * and deserializing the right snapshot.
  * and provides access to the snapshots.
+ *
+ * 这个类提供了操作快照的接口。这个类负责存储，
+ * 序列化/反序列化快照，并对外提供访问快照接口
  */
 public class FileSnap implements SnapShot {
     File snapDir;
@@ -62,6 +65,9 @@ public class FileSnap implements SnapShot {
 
     /**
      * deserialize a data tree from the most recent snapshot
+     *
+     * 找到最近的有效快照，并将快照重放到内存data tree中
+     *
      * @return the zxid of the snapshot
      */ 
     public long deserialize(DataTree dt, Map<Long, Integer> sessions)
@@ -104,6 +110,8 @@ public class FileSnap implements SnapShot {
         if (!foundValid) {
             throw new IOException("Not able to find valid snapshots in " + snapDir);
         }
+        // 这里datatree的lastProcessedZxid填写的是snapshot文件名的zxid，即snapshot开始时的zxid
+        // 这样在之后将数据日志中所有大于快照开始时的事务都重放到内存数据库中
         dt.lastProcessedZxid = Util.getZxidFromName(snap.getName(), "snapshot");
         return dt.lastProcessedZxid;
     }
@@ -212,6 +220,10 @@ public class FileSnap implements SnapShot {
             throw new IllegalStateException(
                     "Snapshot's not open for writing: uninitialized header");
         header.serialize(oa, "fileheader");
+        // 将data tree和session进行序列化并保存到快照文件中
+        // 注意的是这里的快照是一个模糊快照。并不代表某个时刻内存的数据情况。这是因为
+        // 在进行快照的同时，内存的数据可以继续进行修改。不过可以在恢复时通过重放每个
+        // 节点之后的日志来达到最终的数据一致
         SerializeUtils.serializeSnapshot(dt,oa,sessions);
     }
 

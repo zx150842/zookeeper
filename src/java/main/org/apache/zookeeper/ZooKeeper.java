@@ -167,7 +167,9 @@ public class ZooKeeper implements AutoCloseable {
     /**
      * This function allows a client to update the connection string by providing 
      * a new comma separated list of host:port pairs, each corresponding to a 
-     * ZooKeeper server. 
+     * ZooKeeper server.
+     *
+     * 这个方法允许客户端更新与server的连接
      * <p>
      * The function invokes a <a href="https://issues.apache.org/jira/browse/ZOOKEEPER-1355">
      * probabilistic load-balancing algorithm</a> which may cause the client to disconnect from 
@@ -180,6 +182,9 @@ public class ZooKeeper implements AutoCloseable {
      * move to one of the new hosts in order to balance the load. The algorithm will disconnect 
      * from the current host with probability 0.4 and in this case cause the client to connect 
      * to one of the 2 new hosts, chosen at random.
+     *
+     * 这个方法实现了一个负载均衡算法。当有新的server节点加入zookeeper后，zookeeper会将之前server上
+     * 的一些连接转移到新加入的server上
      * <p>
      * If the connection is dropped, the client moves to a special mode "reconfigMode" where he chooses
      * a new server to connect to using the probabilistic algorithm. After finding a server,
@@ -190,7 +195,13 @@ public class ZooKeeper implements AutoCloseable {
      * (the order is non-deterministic, as we random shuffle the list), until a
      * connection is established. The client will continue attempts until the
      * session is explicitly closed (or the session is expired by the server).
-
+     *
+     * 当连接断掉时，客户端会进入一个reconfig的特殊模式，客户端会使用概率算法选择一个新的server来进行
+     * 连接。当找到一个server或者所有的server都连接失败后，客户端会回到正常模式，选择任意一个server来
+     * 尝试连接。如果连接建立失败，会尝试与另一个server连接（尝试server的顺序是不确定的，因为这里首先
+     * 随机排序了server列表），直到建立连接。客户端将一直尝试建立连接直到session关闭或者session在server
+     * 端过期。
+     *
      * @param connectString
      *            comma separated host:port pairs, each corresponding to a zk
      *            server. e.g. "127.0.0.1:3000,127.0.0.1:3001,127.0.0.1:3002"
@@ -254,6 +265,8 @@ public class ZooKeeper implements AutoCloseable {
      * We are implementing this as a nested class of ZooKeeper so that
      * the public methods will not be exposed as part of the ZooKeeper client
      * API.
+     *
+     * 管理watchers & 处理由ClientCnxn发来的事件
      */
     static class ZKWatchManager implements ClientWatchManager {
         private final Map<String, Set<Watcher>> dataWatches =
@@ -645,6 +658,10 @@ public class ZooKeeper implements AutoCloseable {
      * the watcher that will be notified of any changes in state. This
      * notification can come at any point before or after the constructor call
      * has returned.
+     *
+     * session是异步建立的。这个构造方法会立刻返回，所以可能在session还没有完全
+     * 建立起来之前就返回了。watcher用来指定接收任何状态变化通知。通知可以在任何
+     * 时候到达，可能是在构造方法返回前或返回后
      * <p>
      * The instantiated ZooKeeper client object will pick an arbitrary server
      * from the connectString and attempt to connect to it. If establishment of
@@ -1403,6 +1420,8 @@ public class ZooKeeper implements AutoCloseable {
      * <p>
      * The maximum allowable size of the data array is 1 MB (1,048,576 bytes).
      * Arrays larger than this will cause a KeeperExecption to be thrown.
+     *
+     * zookeeper中每个节点的最大大小为1MB
      *
      * @param path
      *                the path for the node
@@ -2661,6 +2680,9 @@ public class ZooKeeper implements AutoCloseable {
 
     /**
      * Asynchronous sync. Flushes channel between process and leader.
+     * 异步刷新，sync的作用是当提交sync之前的所有zxid请求已经在集群中过半数
+     * 成功保存后，客户端会获得sync response的通知。即sync的作用只是客户端
+     * 知晓sync之前的提交已经过半数在集群中保存
      * @param path
      * @param cb a handler for the callback
      * @param ctx context to be provided to the callback

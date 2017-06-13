@@ -120,6 +120,7 @@ public class Follower extends Learner{
         case Leader.PROPOSAL:           
             TxnHeader hdr = new TxnHeader();
             Record txn = SerializeUtils.deserializeTxn(qp.getData(), hdr);
+            // TODO 如果收到的zxid不连续，这里只是记了一个warning？
             if (hdr.getZxid() != lastQueued + 1) {
                 LOG.warn("Got zxid 0x"
                         + Long.toHexString(hdr.getZxid())

@@ -98,6 +98,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                     updateLastHeard();
                     initialized = true;
                 } else {
+                    // 将收到的响应发给SendThread处理
                     sendThread.readResponse(incomingBuffer);
                     lenBuffer.clear();
                     incomingBuffer = lenBuffer;
@@ -106,23 +107,28 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
             }
         }
         if (sockKey.isWritable()) {
+            // 从outgoingQueue获取消息并发送到server
             Packet p = findSendablePacket(outgoingQueue,
                     sendThread.tunnelAuthInProgress());
 
             if (p != null) {
                 updateLastSend();
                 // If we already started writing p, p.bb will already exist
+                // 如果bb=null，则说明这里是首次写p
                 if (p.bb == null) {
                     if ((p.requestHeader != null) &&
                             (p.requestHeader.getType() != OpCode.ping) &&
                             (p.requestHeader.getType() != OpCode.auth)) {
+                        // 在发送时才真正对xid赋值，xid是单机生成的顺序id
                         p.requestHeader.setXid(cnxn.getXid());
                     }
                     p.createBB();
                 }
+                // 发送package
                 sock.write(p.bb);
                 if (!p.bb.hasRemaining()) {
                     sentCount++;
+                    // 从outgoingQueue中移除并添加到pendingQueue中
                     outgoingQueue.removeFirstOccurrence(p);
                     if (p.requestHeader != null
                             && p.requestHeader.getType() != OpCode.ping
@@ -271,9 +277,11 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
      */
     void registerAndConnect(SocketChannel sock, InetSocketAddress addr) 
     throws IOException {
+        // 首先建立tcp层面的连接
         sockKey = sock.register(selector, SelectionKey.OP_CONNECT);
         boolean immediateConnect = sock.connect(addr);
         if (immediateConnect) {
+            // 当tcp层面建立连接后，再建立zookeeper应用层面的连接
             sendThread.primeConnection();
         }
     }
@@ -360,6 +368,8 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
                     sendThread.primeConnection();
                 }
             } else if ((k.readyOps() & (SelectionKey.OP_READ | SelectionKey.OP_WRITE)) != 0) {
+                // 有读写事件，对于读事件发送给SendThread.readResponse方法处理，
+                // 对于写事件，从outgoingQueue中读取请求并发送给server
                 doIO(pendingQueue, cnxn);
             }
         }
@@ -390,6 +400,7 @@ public class ClientCnxnSocketNIO extends ClientCnxnSocket {
     }
 
     synchronized void enableWrite() {
+        // 注册写请求
         int i = sockKey.interestOps();
         if ((i & SelectionKey.OP_WRITE) == 0) {
             sockKey.interestOps(i | SelectionKey.OP_WRITE);

@@ -60,7 +60,7 @@ import org.apache.zookeeper.server.quorum.QuorumPeerConfig.ConfigException;
  * In addition to the config file. There is a file in the data directory called
  * "myid" that contains the server id as an ASCII decimal value.
  *
- * zookeeper启动类
+ * zookeeper server的启动类
  */
 public class QuorumPeerMain {
     private static final Logger LOG = LoggerFactory.getLogger(QuorumPeerMain.class);
@@ -118,9 +118,10 @@ public class QuorumPeerMain {
                 .getSnapRetainCount(), config.getPurgeInterval());
         purgeMgr.start();
 
+        // 集群模式启动
         if (args.length == 1 && config.isDistributed()) {
             runFromConfig(config);
-        } else {
+        } else { // 单机模式启动
             LOG.warn("Either no config or no quorum defined in config, running "
                     + " in standalone mode");
             // there is only server in the quorum -- run as standalone
@@ -157,6 +158,7 @@ public class QuorumPeerMain {
                       true);
           }
 
+          // QuorumPeer可以看做是对每个zookeeper server节点的抽象，所有的方法都由这个类来托管
           quorumPeer = getQuorumPeer();
           quorumPeer.setTxnFactory(new FileTxnSnapLog(
                       config.getDataLogDir(),

@@ -202,7 +202,9 @@ public class Util {
      * Grows the file to the specified number of bytes. This only happenes if 
      * the current file position is sufficiently close (less than 4K) to end of 
      * file. 
-     * 
+     *
+     * 将文件扩容到特定大小。文件扩容只会在文件的剩余大小小于4k时才会发生
+     *
      * @param f output stream to pad
      * @param currentSize application keeps track of the cuurent file size
      * @param preAllocSize how many bytes to pad
@@ -216,6 +218,7 @@ public class Util {
         if (position + 4096 >= currentSize) {
             currentSize = currentSize + preAllocSize;
             fill.position(0);
+            // TODO 这里只写了一个字节的0到扩容后的文件最后？
             f.getChannel().write(fill, currentSize-fill.remaining());
         }
         return currentSize;
