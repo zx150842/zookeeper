@@ -227,9 +227,8 @@ public class FileTxnSnapLog {
                     //empty logs
                     return dt.lastProcessedZxid;
                 }
-                // TODO 这里也就对顺序不一致的zxid报了一个error？
-                // zxid小的但是在日志后面的记录不会覆盖掉之前的记录吗？
-                // TODO 这里应该也可以，因为在之后还会与leader同步数据，这样之后的数据还能找回来
+                // 这里也就对顺序不一致的zxid报了一个error
+                // 这里不会存在zxid小的在后面的情况，zxid在日志中的顺序由tcp的可靠性来保证的
                 if (hdr.getZxid() < highestZxid && highestZxid != 0) {
                     LOG.error("{}(higestZxid) > {}(next log) for type {}",
                             new Object[] { highestZxid, hdr.getZxid(),
@@ -241,11 +240,6 @@ public class FileTxnSnapLog {
                     // 将快照之后的事务添加到datatree中
                     processTransaction(hdr,dt,sessions, itr.getTxn());
                 } catch(KeeperException.NoNodeException e) {
-                    // TODO 猜测zookeeper允许在恢复时，跳过一些漏掉的日志，因为日志的操作都是幂等的，
-                    // 除了要先create node，再set data之类的请求？
-                    // FIXME 还是不应该漏掉日志，因为漏掉的可能是对节点的操作，而之后没有再对同一个
-                    // 节点的操作，这样拿到最大的zxid后，与leader同步之后的数据，之前漏掉的数据就找
-                    // 不回来了
                    throw new IOException("Failed to process transaction type: " +
                          hdr.getType() + " error: " + e.getMessage(), e);
                 }
